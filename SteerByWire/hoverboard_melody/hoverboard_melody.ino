@@ -2,6 +2,9 @@
 #define BUZZER_PIN PA4
 #define LED_PIN PB2    // LED pin same as hoverboard main board
 
+unsigned long lastBeepTime = 0;
+const unsigned long beepInterval = 3000;  // 3 seconds
+
 void setup() {
   pinMode(BUZZER_PIN, OUTPUT);
   pinMode(LED_PIN, OUTPUT);
@@ -13,11 +16,15 @@ void setup() {
     beepWithLed();
     delay(200);
   }
+  
+  lastBeepTime = millis();  // Initialize timer
 }
 
 void loop() {
-  beepWithLed();
-  delay(3000);
+  if (millis() - lastBeepTime >= beepInterval) {
+    beepWithLed();
+    lastBeepTime = millis();
+  }
 }
 
 void beep() {
