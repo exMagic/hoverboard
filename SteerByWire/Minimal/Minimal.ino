@@ -1,29 +1,21 @@
-// ########################## DEFINES ##########################
-#define BUZZER_PIN 4            // Buzzer pin (PA4 = pin 4 in Arduino)
-#define BEEP_FREQUENCY 2000     // Beep frequency in Hz
-#define BEEP_DURATION 100       // Short beep duration in ms
+#include <Wire.h>
 
-// ########################## SETUP ##########################
-void setup() 
-{
-  // Initialize buzzer pin
-  pinMode(BUZZER_PIN, OUTPUT);
-  digitalWrite(BUZZER_PIN, LOW);
-  
-  // Delay to ensure system is ready
-  delay(500);
-  
-  // Beep 3 times on startup
-  for(int i = 0; i < 3; i++) {
-    tone(BUZZER_PIN, BEEP_FREQUENCY, BEEP_DURATION);
-    delay(BEEP_DURATION + 200);  // Wait for beep to finish + pause
-  }
+void setup() {
+  Wire.begin(0x08);  // Initialize I2C as slave with address 0x08
+  Wire.onReceive(receiveEvent);  // Register receive event
+  Serial.begin(115200);  // For debugging
+  Serial.println("HELLO");
 }
 
-// ########################## LOOP ##########################
-void loop() 
-{
-  // One short beep every 3 seconds
-  tone(BUZZER_PIN, BEEP_FREQUENCY, BEEP_DURATION);
-  delay(3000);  // 3 second delay
+void loop() {
+  // Do nothing, wait for I2C messages
+  
+}
+
+void receiveEvent(int bytes) {
+  while (Wire.available()) {
+    char c = Wire.read();  // Read each byte
+    Serial.print(c);       // Print received data to serial monitor
+  }
+  Serial.println();
 }
