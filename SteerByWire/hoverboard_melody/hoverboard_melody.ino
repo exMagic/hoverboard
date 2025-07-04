@@ -1,64 +1,44 @@
-/*
- * Simple Arduino Sketch for Hoverboard Mainboard Buzzer
- * 
- * This sketch provides simple beeping functionality on the hoverboard mainboard.
- * 
- * Hardware:
- * - STM32F103 (hoverboard mainboard)
- * - Buzzer connected to:
- *   * Board Variant 0: PA4 (Pin A4)
- * 
- * Notes:
- * - Use STM32duino core for Arduino IDE
- * - Select "Generic STM32F1 series" board
- * - Choose "STM32F103RC" variant
- */
-
-
-
+// Simple buzzer for STM32 hoverboard
 #define BUZZER_PIN PA4
-#define BEEP_FREQUENCY 2000     // Beep frequency in Hz
-#define BEEP_DURATION 100       // Short beep duration in ms
+#define LED_PIN PB2    // LED pin same as hoverboard main board
 
 void setup() {
   pinMode(BUZZER_PIN, OUTPUT);
-  digitalWrite(BUZZER_PIN, LOW);
-  
-  // Delay to ensure system is ready
+  pinMode(LED_PIN, OUTPUT);
+  digitalWrite(LED_PIN, LOW);  // Turn off LED initially
   delay(500);
   
-  // 3 quick beeps on startup
-  Serial.println("Playing 3 startup beeps...");
+  // 3 beeps on startup
   for (int i = 0; i < 3; i++) {
-    playTone(BEEP_FREQUENCY, BEEP_DURATION);
-    delay(200);  // Short pause between beeps
-  }  
+    beepWithLed();
+    delay(200);
+  }
 }
 
 void loop() {
-  // One short beep every 3 seconds
-  playTone(BEEP_FREQUENCY, BEEP_DURATION);
-  delay(3000);  // 3 second delay
+  beepWithLed();
+  delay(3000);
 }
 
-void playTone(int frequency, int duration) {
-  if (frequency == 0) {
-    delay(duration);
-    return;
-  }
-  
-  // Calculate the period for the square wave
-  int period = 1000000 / frequency;  // Period in microseconds
-  int halfPeriod = period / 2;
-  
-  // Calculate how many cycles we need for the duration
-  long cycles = (long)frequency * duration / 1000;
-  
-  // Generate square wave for the specified duration
-  for (long i = 0; i < cycles; i++) {
+void beep() {
+  for (int i = 0; i < 200; i++) {
     digitalWrite(BUZZER_PIN, HIGH);
-    delayMicroseconds(halfPeriod);
+    delayMicroseconds(150);
     digitalWrite(BUZZER_PIN, LOW);
-    delayMicroseconds(halfPeriod);
+    delayMicroseconds(150);
   }
+}
+
+void ledOn() {
+  digitalWrite(LED_PIN, HIGH);
+}
+
+void ledOff() {
+  digitalWrite(LED_PIN, LOW);
+}
+
+void beepWithLed() {
+  ledOn();
+  beep();
+  ledOff();
 }
