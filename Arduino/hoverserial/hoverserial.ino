@@ -33,8 +33,7 @@
 #define SPEED_STEP          20          // [-] Speed step
 // #define DEBUG_RX                        // [-] Debug received data. Prints all bytes to serial (comment-out to disable)
 
-#include <SoftwareSerial.h>
-SoftwareSerial HoverSerial(2,3);        // RX, TX
+
 
 // Global variables
 uint8_t idx = 0;                        // Index for new data pointer
@@ -71,7 +70,7 @@ void setup()
   Serial.begin(SERIAL_BAUD);
   Serial.println("Hoverboard Serial v1.0");
 
-  HoverSerial.begin(HOVER_SERIAL_BAUD);
+  Serial1.begin(HOVER_SERIAL_BAUD);//Arduino MEGA pin 19,18
   pinMode(LED_BUILTIN, OUTPUT);
 }
 
@@ -85,15 +84,15 @@ void Send(int16_t uSteer, int16_t uSpeed)
   Command.checksum = (uint16_t)(Command.start ^ Command.steer ^ Command.speed);
 
   // Write to Serial
-  HoverSerial.write((uint8_t *) &Command, sizeof(Command)); 
+  Serial1.write((uint8_t *) &Command, sizeof(Command)); 
 }
 
 // ########################## RECEIVE ##########################
 void Receive()
 {
     // Check for new data availability in the Serial buffer
-    if (HoverSerial.available()) {
-        incomingByte 	  = HoverSerial.read();                                   // Read the incoming byte
+    if (Serial1.available()) {
+        incomingByte 	  = Serial1.read();                                   // Read the incoming byte
         bufStartFrame	= ((uint16_t)(incomingByte) << 8) | incomingBytePrev;       // Construct the start frame
     }
     else {
