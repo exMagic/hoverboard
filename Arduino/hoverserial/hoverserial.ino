@@ -128,10 +128,10 @@ void Receive()
             memcpy(&Feedback, &NewFeedback, sizeof(SerialFeedback));
 
             // Print data to built-in Serial
-            Serial.print("1: ");   Serial.print(Feedback.cmd1);
-            Serial.print(" 2: ");  Serial.print(Feedback.cmd2);
-            Serial.print(" 3: ");  Serial.print(Feedback.speedR_meas);
-            Serial.print(" 4: ");  Serial.print(Feedback.speedL_meas);
+            //Serial.print("1: ");   Serial.print(Feedback.cmd1);
+            //Serial.print(" 2: ");  Serial.print(Feedback.cmd2);
+            //Serial.print(" 3: ");  Serial.print(Feedback.speedR_meas);
+            //Serial.print(" 4: ");  Serial.print(Feedback.speedL_meas);
             Serial.print(" 5: ");  Serial.print(Feedback.batVoltage);
             Serial.print(" 6: ");  Serial.print(Feedback.boardTemp);
             Serial.print(" 7: ");  Serial.println(Feedback.cmdLed);
