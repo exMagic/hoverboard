@@ -1,366 +1,249 @@
-/* ===================================================================
-   ROZSZERZONA DIAGNOSTYKA MT6816 – SZCZEGÓŁOWE WZORCE BEEP
-   Płyta   :  STM32F103RCT6 (hoverboard mainboard)
-   Enkoder :  MT6816-STD
-   Piny    :  SCK  = PB7, CS = PB6, MOSI = PB5, MISO = PB10
-   Diagnostyka: Buzzer PA4 + LED PB2
-   =================================================================== */
-
-#include <SPI.h>
+#include <Arduino.h>
 
 // === DEFINICJE PINÓW ===
-constexpr uint8_t PIN_SCK  = PB7;   
-constexpr uint8_t PIN_MOSI = PB5;   
-constexpr uint8_t PIN_MISO = PB10;  
-constexpr uint8_t PIN_CSN  = PB6;   
+constexpr uint8_t PIN_SCK  = PB7;   // Serial Clock
+constexpr uint8_t PIN_MOSI = PB5;   // Master Out Slave In
+constexpr uint8_t PIN_MISO = PB10;  // Master In Slave Out
+constexpr uint8_t PIN_CSN  = PB6;   // Chip Select (active low)
 
-constexpr uint8_t LED_PIN     = PB2;
-constexpr uint8_t BUZZER_PIN  = PA4;
+constexpr uint8_t LED_PIN     = PB2;  // LED do sygnalizacji
+constexpr uint8_t BUZZER_PIN  = PA4;  // Buzzer do sygnalizacji audio
 
-// === MT6816 REJESTRY ===
-constexpr uint8_t REG_ANGLE_MSB = 0x03;
-constexpr uint8_t REG_ANGLE_LSB = 0x04;
-constexpr uint32_t FREQ_HZ      = 1000000UL;   // 1 MHz
+// === MT6816 KOMENDY ===
+constexpr uint16_t MT6816_READ_ANGLE = 0x83FF;  // Komenda odczytu kąta
+constexpr uint8_t MT6816_NOP = 0x00;            // No Operation
 
-SPISettings mt6816_settings(FREQ_HZ, MSBFIRST, SPI_MODE3);
+// === ZMIENNE GLOBALNE ===
+uint16_t lastAngle = 0;
+uint16_t angleBuffer[5] = {0};  // Bufor dla filtracji
+uint8_t bufferIndex = 0;
+bool communicationOK = false;
+unsigned long lastReadTime = 0;
+unsigned long lastDiagTime = 0;
+const unsigned long READ_INTERVAL = 100;   // Odczyt co 100ms
+const unsigned long DIAG_INTERVAL = 2000;  // Diagnostyka co 2s
 
-// === CZĘSTOTLIWOŚCI BEEP DLA RÓŻNYCH STANÓW ===
-#define BEEP_STARTUP      2000  // Ton startowy
-#define BEEP_SPI_OK       1800  // SPI działa
-#define BEEP_NO_COMM      500   // Brak komunikacji
-#define BEEP_MAGNET_OK    1500  // Magnet wykryty
-#define BEEP_NO_MAGNET    300   // Brak magnesu
-#define BEEP_ANGLE_GOOD   2200  // Kąt się zmienia
-#define BEEP_ANGLE_STATIC 800   // Kąt statyczny
-#define BEEP_ERROR        200   // Ogólny błąd
-#define BEEP_TEST         1000  // Test sprzętu
-
-// === STRUKTURA STANU ===
-struct DiagnosticState {
-  bool spi_responding;
-  bool magnet_detected;
-  bool angle_changing;
-  bool pins_connected;
-  uint16_t raw_angle;
-  float angle_degrees;
-  uint8_t reg03;
-  uint8_t reg04;
-  uint8_t error_count;
-  uint32_t last_angle_change;
-};
-
-DiagnosticState diag_state = {false, false, false, false, 0, 0.0, 0, 0, 0, 0};
-
-// === FUNKCJE BEEP Z RÓŻNYMI WZORCAMI ===
-void beep_tone(uint16_t frequency, uint16_t duration_ms) {
-  if (frequency == 0) {
-    digitalWrite(BUZZER_PIN, LOW);
-    delay(duration_ms);
-    return;
-  }
-  
-  uint32_t period_us = 1000000UL / frequency;
-  uint32_t half_period = period_us / 2;
-  uint32_t cycles = (duration_ms * 1000UL) / period_us;
-  
-  for (uint32_t i = 0; i < cycles; i++) {
-    digitalWrite(BUZZER_PIN, HIGH);
-    delayMicroseconds(half_period);
-    digitalWrite(BUZZER_PIN, LOW);
-    delayMicroseconds(half_period);
-  }
-}
-
-void led_blink(uint8_t count, uint16_t on_time = 100, uint16_t off_time = 100) {
-  for (uint8_t i = 0; i < count; i++) {
+// === SYGNALIZACJA ===
+void signalSuccess() {
+  // 3 krótkie błyśnięcia LED + 3 krótkie piki buzzera
+  for (int i = 0; i < 3; i++) {
     digitalWrite(LED_PIN, HIGH);
-    delay(on_time);
+    tone(BUZZER_PIN, 1000, 100);
+    delay(100);
     digitalWrite(LED_PIN, LOW);
-    delay(off_time);
-  }
-}
-
-// === WZORCE DIAGNOSTYCZNE ===
-void diagnostic_startup() {
-  // Sekwencja startowa: 3 rosnące tony + LED
-  led_blink(1, 500);
-  beep_tone(BEEP_STARTUP, 200);
-  delay(100);
-  beep_tone(BEEP_STARTUP + 300, 200);
-  delay(100);
-  beep_tone(BEEP_STARTUP + 600, 300);
-  delay(500);
-}
-
-void diagnostic_pin_test() {
-  // Test połączeń pinów - 5 krótkich beepów z LED
-  led_blink(5, 50, 150);
-  for (int i = 0; i < 5; i++) {
-    beep_tone(BEEP_TEST, 100);
-    delay(150);
-  }
-}
-
-void diagnostic_spi_no_response() {
-  // Brak odpowiedzi SPI - 7 bardzo niskich tonów
-  led_blink(7, 100, 200);
-  for (int i = 0; i < 7; i++) {
-    beep_tone(BEEP_NO_COMM, 200);
-    delay(300);
-  }
-}
-
-void diagnostic_spi_working() {
-  // SPI działa - 2 wysokie tony
-  led_blink(2, 200);
-  beep_tone(BEEP_SPI_OK, 250);
-  delay(200);
-  beep_tone(BEEP_SPI_OK, 250);
-}
-
-void diagnostic_no_magnet() {
-  // Brak magnesu - 4 długie niskie tony
-  led_blink(4, 400, 300);
-  for (int i = 0; i < 4; i++) {
-    beep_tone(BEEP_NO_MAGNET, 600);
-    delay(400);
-  }
-}
-
-void diagnostic_magnet_detected() {
-  // Magnet wykryty - 3 średnie tony
-  led_blink(3, 250);
-  for (int i = 0; i < 3; i++) {
-    beep_tone(BEEP_MAGNET_OK, 300);
-    delay(200);
-  }
-}
-
-void diagnostic_angle_changing() {
-  // Kąt się zmienia - melodia rosnąca + ton reprezentujący kąt
-  led_blink(1, 1000);
-  beep_tone(BEEP_ANGLE_GOOD, 200);
-  delay(100);
-  beep_tone(BEEP_ANGLE_GOOD + 200, 200);
-  delay(100);
-  
-  // Ton reprezentujący kąt (200-3000 Hz)
-  uint16_t angle_freq = 200 + (uint16_t)(diag_state.angle_degrees * 8);
-  if (angle_freq > 3000) angle_freq = 3000;
-  beep_tone(angle_freq, 400);
-}
-
-void diagnostic_angle_static() {
-  // Kąt statyczny - 1 długi średni ton
-  led_blink(1, 800);
-  beep_tone(BEEP_ANGLE_STATIC, 1000);
-}
-
-void diagnostic_multiple_errors() {
-  // Wiele błędów - alarm wzorowy
-  for (int i = 0; i < 3; i++) {
-    led_blink(10, 50, 50);
-    beep_tone(BEEP_ERROR, 100);
-    delay(100);
-    beep_tone(BEEP_ERROR + 100, 100);
     delay(100);
   }
 }
 
-void diagnostic_raw_data_output() {
-  // Wyświetl surowe dane przez serie beepów
-  // REG03 jako liczba krótkich beepów (górne 4 bity)
-  uint8_t upper_nibble = (diag_state.reg03 >> 4) & 0x0F;
-  for (int i = 0; i < upper_nibble; i++) {
-    beep_tone(1500, 100);
-    delay(150);
-  }
-  delay(500);
-  
-  // REG04 jako liczba długich beepów (dolne 4 bity)
-  uint8_t lower_nibble = diag_state.reg04 & 0x0F;
-  for (int i = 0; i < lower_nibble; i++) {
-    beep_tone(800, 300);
-    delay(200);
-  }
+void signalError() {
+  // Długie błyśnięcie LED + długi pik buzzera
+  digitalWrite(LED_PIN, HIGH);
+  tone(BUZZER_PIN, 500, 1000);
+  delay(1000);
+  digitalWrite(LED_PIN, LOW);
 }
 
-// === FUNKCJE TESTOWANIA SPRZĘTU ===
-bool test_pin_connectivity() {
-  // Test czy piny odpowiadają
-  pinMode(PIN_CSN, OUTPUT);
-  pinMode(PIN_SCK, OUTPUT);
-  pinMode(PIN_MOSI, OUTPUT);
-  pinMode(PIN_MISO, INPUT);
+void signalHeartbeat() {
+  // Pojedyncze krótkie błyśnięcie - komunikacja OK
+  digitalWrite(LED_PIN, HIGH);
+  delay(50);
+  digitalWrite(LED_PIN, LOW);
+}
+
+// === FUNKCJE SPI ===
+uint16_t spiTransfer16(uint16_t data) {
+  uint16_t receivedData = 0;
   
-  // Test CS - czy możemy kontrolować pin
-  digitalWrite(PIN_CSN, HIGH);
-  delay(1);
-  bool cs_high = digitalRead(PIN_CSN);
+  // Aktywuj CSN (active low)
   digitalWrite(PIN_CSN, LOW);
-  delay(1);
-  bool cs_low = !digitalRead(PIN_CSN);
+  delayMicroseconds(10); // Setup time
   
-  // Test SCK
-  digitalWrite(PIN_SCK, HIGH);
-  delay(1);
-  bool sck_high = digitalRead(PIN_SCK);
-  digitalWrite(PIN_SCK, LOW);
-  delay(1);
-  bool sck_low = !digitalRead(PIN_SCK);
-  
-  return (cs_high && cs_low && sck_high && sck_low);
-}
-
-uint16_t read_angle_with_retry() {
-  uint8_t msb, lsb;
-  uint8_t retry_count = 0;
-  
-  do {
-    SPI.beginTransaction(mt6816_settings);
-    
-    // Odczyt MSB
-    digitalWrite(PIN_CSN, LOW);
-    delayMicroseconds(5);
-    SPI.transfer(REG_ANGLE_MSB | 0x80);
-    msb = SPI.transfer(0x00);
-    digitalWrite(PIN_CSN, HIGH);
+  // Przesyłaj 16 bitów (MSB first)
+  for (int i = 15; i >= 0; i--) {
+    // Ustaw bit danych na MOSI
+    digitalWrite(PIN_MOSI, (data & (1 << i)) ? HIGH : LOW);
     delayMicroseconds(10);
     
-    // Odczyt LSB
-    digitalWrite(PIN_CSN, LOW);
-    delayMicroseconds(5);
-    SPI.transfer(REG_ANGLE_LSB | 0x80);
-    lsb = SPI.transfer(0x00);
-    digitalWrite(PIN_CSN, HIGH);
+    // Wygeneruj zbocze narastające zegara
+    digitalWrite(PIN_SCK, HIGH);
+    delayMicroseconds(10);
     
-    SPI.endTransaction();
-    
-    diag_state.reg03 = msb;
-    diag_state.reg04 = lsb;
-    
-    retry_count++;
-    
-    // Sprawdź czy dane są sensowne
-    if ((msb != 0x00 && msb != 0xFF) || (lsb != 0x00 && lsb != 0xFF)) {
-      return ((uint16_t(msb) << 8) | lsb) & 0x3FFF;
+    // Odczytaj bit z MISO na zboczu narastającym
+    if (digitalRead(PIN_MISO)) {
+      receivedData |= (1 << i);
     }
     
-    delay(10); // Krótka pauza przed ponowną próbą
-    
-  } while (retry_count < 3);
+    // Zbocze opadające zegara
+    digitalWrite(PIN_SCK, LOW);
+    delayMicroseconds(10);
+  }
   
-  return 0; // Niepowodzenie
+  // Dezaktywuj CSN
+  delayMicroseconds(10);
+  digitalWrite(PIN_CSN, HIGH);
+  delayMicroseconds(50); // Hold time
+  
+  return receivedData;
 }
 
-void comprehensive_diagnostics() {
-  static uint32_t last_diagnostic = 0;
-  static uint16_t previous_angle = 0;
-  static bool first_reading = true;
+// === FUNKCJE MT6816 ===
+uint16_t readMT6816Angle() {
+  // Wyślij komendę odczytu kąta
+  uint16_t response = spiTransfer16(MT6816_READ_ANGLE);
   
-  if (millis() - last_diagnostic < 3000) return; // Diagnostyka co 3 sekundy
-  last_diagnostic = millis();
+  // MT6816 potrzebuje drugiej transakcji dla otrzymania danych
+  delayMicroseconds(100);
+  response = spiTransfer16(MT6816_NOP);
   
-  // === FAZA 1: TEST POŁĄCZEŃ PINÓW ===
-  diag_state.pins_connected = test_pin_connectivity();
-  if (!diag_state.pins_connected) {
-    diagnostic_multiple_errors();
-    return;
+  // Sprawdź poprawność danych (MT6816 ma 14-bitową rozdzielczość)
+  // Bity 15-14 powinny być 0, bity 13-0 to dane kąta
+  if ((response & 0xC000) == 0) {
+    return response & 0x3FFF; // Zwróć tylko 14 bitów danych
   }
   
-  // === FAZA 2: TEST KOMUNIKACJI SPI ===
-  uint16_t raw_data = read_angle_with_retry();
-  diag_state.raw_angle = raw_data;
-  
-  if (raw_data == 0) {
-    diag_state.spi_responding = false;
-    diag_state.error_count++;
-    diagnostic_spi_no_response();
-    return;
-  } else {
-    diag_state.spi_responding = true;
-    diag_state.error_count = 0;
-    diagnostic_spi_working();
-    delay(500);
+  return 0xFFFF; // Błąd komunikacji
+}
+
+bool validateAngleData(uint16_t angle) {
+  // Sprawdź czy kąt jest w prawidłowym zakresie (0-16383 dla 14-bit)
+  if (angle == 0xFFFF || angle > 16383) {
+    return false;
   }
   
-  // === FAZA 3: TEST DETEKCJI MAGNESU ===
-  diag_state.magnet_detected = !(diag_state.reg04 & 0x02); // No_Mag_Warning bit
-  
-  if (!diag_state.magnet_detected) {
-    diagnostic_no_magnet();
-    return;
-  } else {
-    diagnostic_magnet_detected();
-    delay(500);
-  }
-  
-  // === FAZA 4: TEST ZMIAN KĄTA ===
-  diag_state.angle_degrees = (diag_state.raw_angle * 360.0f) / 16383.0f;
-  
-  if (!first_reading) {
-    uint16_t angle_diff = abs((int)diag_state.raw_angle - (int)previous_angle);
-    if (angle_diff > 50) { // Tolerancja ~1.1°
-      diag_state.angle_changing = true;
-      diag_state.last_angle_change = millis();
+  // Sprawdź stabilność - kąt nie powinien skakać o więcej niż 1000 w jednym odczycie
+  // (chyba że przeszedł przez 0/16383)
+  if (lastAngle != 0) {
+    uint16_t diff = (angle > lastAngle) ? (angle - lastAngle) : (lastAngle - angle);
+    if (diff > 1000 && diff < 15000) { // 15000 to próg dla przejścia przez 0
+      return false;
     }
-  } else {
-    first_reading = false;
   }
   
-  previous_angle = diag_state.raw_angle;
-  
-  // Sprawdź czy były zmiany w ostatnich 10 sekundach
-  bool recent_change = (millis() - diag_state.last_angle_change) < 10000;
-  
-  if (diag_state.angle_changing && recent_change) {
-    diagnostic_angle_changing();
-  } else {
-    diagnostic_angle_static();
+  return true;
+}
+
+void updateAngleBuffer(uint16_t angle) {
+  angleBuffer[bufferIndex] = angle;
+  bufferIndex = (bufferIndex + 1) % 5;
+}
+
+uint16_t getFilteredAngle() {
+  // Prosta filtracja - mediana z 5 próbek
+  uint16_t sorted[5];
+  for (int i = 0; i < 5; i++) {
+    sorted[i] = angleBuffer[i];
   }
   
-  delay(1000);
+  // Sortowanie bąbelkowe
+  for (int i = 0; i < 4; i++) {
+    for (int j = 0; j < 4 - i; j++) {
+      if (sorted[j] > sorted[j + 1]) {
+        uint16_t temp = sorted[j];
+        sorted[j] = sorted[j + 1];
+        sorted[j + 1] = temp;
+      }
+    }
+  }
   
-  // === FAZA 5: SUROWE DANE (OPCJONALNE) ===
-  diagnostic_raw_data_output();
+  return sorted[2]; // Mediana
 }
 
 // === SETUP ===
 void setup() {
+  // Konfiguracja pinów SPI
+  pinMode(PIN_SCK, OUTPUT);
+  pinMode(PIN_MOSI, OUTPUT);
+  pinMode(PIN_MISO, INPUT_PULLDOWN);  // Pull-down z powodu zewnętrznych pull-up
   pinMode(PIN_CSN, OUTPUT);
-  digitalWrite(PIN_CSN, HIGH);
+  
+  // Konfiguracja pinów sygnalizacji
   pinMode(LED_PIN, OUTPUT);
   pinMode(BUZZER_PIN, OUTPUT);
   
-  // Sekwencja startowa
-  diagnostic_startup();
+  // Inicjalizacja stanów pinów SPI
+  digitalWrite(PIN_SCK, LOW);    // Clock idle low
+  digitalWrite(PIN_MOSI, LOW);   // MOSI idle low
+  digitalWrite(PIN_CSN, HIGH);   // CSN idle high (inactive)
   
-  // Test połączeń pinów
-  diagnostic_pin_test();
+  // Inicjalizacja sygnalizacji
+  digitalWrite(LED_PIN, LOW);
+  digitalWrite(BUZZER_PIN, LOW);
   
-  beep_tone(BEEP_TEST, 200);  // np. 1000 Hz przez 200 ms
-
-  // Konfiguracja SPI
-  SPI.setMOSI(PIN_MOSI);
-  SPI.setMISO(PIN_MISO);
-  SPI.setSCLK(PIN_SCK);
-  SPI.begin();
+  // Sygnał startu - 2 długie piki
+  for (int i = 0; i < 2; i++) {
+    digitalWrite(LED_PIN, HIGH);
+    tone(BUZZER_PIN, 800, 200);
+    delay(300);
+    digitalWrite(LED_PIN, LOW);
+    delay(200);
+  }
   
-  delay(1000);
+  delay(1000); // Stabilizacja MT6816
 }
 
 // === MAIN LOOP ===
 void loop() {
-  // Główna diagnostyka co 3 sekundy
-  comprehensive_diagnostics();
+  unsigned long currentTime = millis();
   
-  // Krótkie mignięcie LED co sekundę = system żyje
-  static uint32_t last_heartbeat = 0;
-  if (millis() - last_heartbeat > 1000) {
-    last_heartbeat = millis();
-    led_blink(1, 150);
+  // === ODCZYT KĄTA ===
+  if (currentTime - lastReadTime >= READ_INTERVAL) {
+    lastReadTime = currentTime;
     
+    // Odczytaj kąt z MT6816
+    uint16_t rawAngle = readMT6816Angle();
+    
+    if (validateAngleData(rawAngle)) {
+      // Dane poprawne
+      updateAngleBuffer(rawAngle);
+      uint16_t filteredAngle = getFilteredAngle();
+      lastAngle = filteredAngle;
+      communicationOK = true;
+      
+      // Sygnalizuj poprawną komunikację (miganie co 10 odczytów)
+      static uint8_t readCounter = 0;
+      readCounter++;
+      if (readCounter >= 10) {
+        signalHeartbeat();
+        readCounter = 0;
+      }
+      
+    } else {
+      // Błąd komunikacji
+      communicationOK = false;
+      
+      // Sygnalizuj błąd co 5 nieudanych prób
+      static uint8_t errorCounter = 0;
+      errorCounter++;
+      if (errorCounter >= 5) {
+        signalError();
+        errorCounter = 0;
+      }
+    }
   }
   
-  delay(100);
+  // === DIAGNOSTYKA ===
+  if (currentTime - lastDiagTime >= DIAG_INTERVAL) {
+    lastDiagTime = currentTime;
+    
+    if (communicationOK) {
+      signalSuccess(); // Komunikacja działa poprawnie
+      
+      // Dodatkowa sygnalizacja kąta przez buzzer
+      // Wysokość tonu proporcjonalna do kąta
+      uint16_t toneFreq = 200 + (lastAngle * 800 / 16383); // 200-1000 Hz
+      tone(BUZZER_PIN, toneFreq, 100);
+      
+    } else {
+      // Brak komunikacji - seria błędów
+      for (int i = 0; i < 5; i++) {
+        digitalWrite(LED_PIN, HIGH);
+        tone(BUZZER_PIN, 200, 100);
+        delay(100);
+        digitalWrite(LED_PIN, LOW);
+        delay(100);
+      }
+    }
+  }
+  
+  delay(10); // Krótka pauza głównej pętli
 }
