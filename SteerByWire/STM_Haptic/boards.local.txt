@@ -1,0 +1,4 @@
+genericSTM32F103C8.name=Generic STM32F1 series
+genericSTM32F103C8.upload.tool=stm32cubeprog
+genericSTM32F103C8.upload.protocol=SWD
+genericSTM32F103C8.upload.offset_address=0x08005000
