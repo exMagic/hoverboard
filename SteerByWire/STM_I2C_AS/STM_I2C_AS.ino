@@ -92,13 +92,13 @@ void loop() {
   // Generowanie tonu
   if (ok0 && ok7) {
     // Obie wartośći poprawne: miks dwóch częstotliwości
-    int freq0 = map(angle0, 0, 4095, 200, 1200);
-    int freq7 = map(angle7, 0, 4095, 1200, 2000);
+    int freq0 = map(angle0, 0, 4095, 200, 2000);
+    int freq7 = map(angle7, 0, 4095, 200, 2000);
     // Krótkie naprzemienne tony
     tone(BUZZER_PIN, freq0, 30);
-    delay(40);
+    delay(3);
     tone(BUZZER_PIN, freq7, 30);
-    delay(40);
+    //delay(40);
 
   } else if (ok0) {
     // Tylko enkoder 0
@@ -122,5 +122,5 @@ void loop() {
     }
   }
 
-  delay(10);
+  //delay(10);
 }
