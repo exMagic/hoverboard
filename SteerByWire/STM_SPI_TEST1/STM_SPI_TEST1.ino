@@ -1,249 +1,126 @@
-#include <Arduino.h>
+#include <Wire.h>
 
-// === DEFINICJE PINÓW ===
-constexpr uint8_t PIN_SCK  = PB7;   // Serial Clock
-constexpr uint8_t PIN_MOSI = PB5;   // Master Out Slave In
-constexpr uint8_t PIN_MISO = PB10;  // Master In Slave Out
-constexpr uint8_t PIN_CSN  = PB6;   // Chip Select (active low)
+// ---------- Definicje ----------
 
-constexpr uint8_t LED_PIN     = PB2;  // LED do sygnalizacji
-constexpr uint8_t BUZZER_PIN  = PA4;  // Buzzer do sygnalizacji audio
+// AS5600
+#define AS5600_I2C_ADDRESS   0x36
+#define AS5600_ANGLE_REG     0x0E
+#define AS5600_STATUS_REG    0x0B
 
-// === MT6816 KOMENDY ===
-constexpr uint16_t MT6816_READ_ANGLE = 0x83FF;  // Komenda odczytu kąta
-constexpr uint8_t MT6816_NOP = 0x00;            // No Operation
+// TCA9548A
+#define TCA_ADDR             0x70  // Domyślny adres multipleksera
 
-// === ZMIENNE GLOBALNE ===
-uint16_t lastAngle = 0;
-uint16_t angleBuffer[5] = {0};  // Bufor dla filtracji
-uint8_t bufferIndex = 0;
-bool communicationOK = false;
-unsigned long lastReadTime = 0;
-unsigned long lastDiagTime = 0;
-const unsigned long READ_INTERVAL = 100;   // Odczyt co 100ms
-const unsigned long DIAG_INTERVAL = 2000;  // Diagnostyka co 2s
+// Piny
+#define BUZZER_PIN           PA4
+#define I2C_SDA_PIN          PB11
+#define I2C_SCL_PIN          PB10
 
-// === SYGNALIZACJA ===
-void signalSuccess() {
-  // 3 krótkie błyśnięcia LED + 3 krótkie piki buzzera
-  for (int i = 0; i < 3; i++) {
-    digitalWrite(LED_PIN, HIGH);
-    tone(BUZZER_PIN, 1000, 100);
-    delay(100);
-    digitalWrite(LED_PIN, LOW);
-    delay(100);
-  }
+// Utworzenie instancji I2C2 na PB11/PB10
+TwoWire Wire2(I2C_SDA_PIN, I2C_SCL_PIN);
+
+// Flagi
+bool tca_initialized = false;
+
+// ---------- Funkcje pomocnicze ----------
+
+// Wybór kanału na TCA9548A (0–7)
+void tcaSelect(uint8_t channel) {
+  if (channel > 7) return;
+  Wire2.beginTransmission(TCA_ADDR);
+  Wire2.write(1 << channel);
+  Wire2.endTransmission();
 }
 
-void signalError() {
-  // Długie błyśnięcie LED + długi pik buzzera
-  digitalWrite(LED_PIN, HIGH);
-  tone(BUZZER_PIN, 500, 1000);
-  delay(1000);
-  digitalWrite(LED_PIN, LOW);
+// Test połączenia z AS5600 na bieżącym kanale
+bool testAS5600() {
+  Wire2.beginTransmission(AS5600_I2C_ADDRESS);
+  Wire2.write(AS5600_STATUS_REG);
+  if (Wire2.endTransmission() != 0) return false;
+  Wire2.requestFrom(AS5600_I2C_ADDRESS, (uint8_t)1);
+  return Wire2.available() == 1;
 }
 
-void signalHeartbeat() {
-  // Pojedyncze krótkie błyśnięcie - komunikacja OK
-  digitalWrite(LED_PIN, HIGH);
-  delay(50);
-  digitalWrite(LED_PIN, LOW);
+// Odczyt kąta (12-bit)
+uint16_t readAS5600Angle() {
+  Wire2.beginTransmission(AS5600_I2C_ADDRESS);
+  Wire2.write(AS5600_ANGLE_REG);
+  Wire2.endTransmission();
+  Wire2.requestFrom(AS5600_I2C_ADDRESS, (uint8_t)2);
+  if (Wire2.available() < 2) return 0;
+  uint8_t msb = Wire2.read();
+  uint8_t lsb = Wire2.read();
+  return ((uint16_t)msb << 8 | lsb) & 0x0FFF;
 }
 
-// === FUNKCJE SPI ===
-uint16_t spiTransfer16(uint16_t data) {
-  uint16_t receivedData = 0;
-  
-  // Aktywuj CSN (active low)
-  digitalWrite(PIN_CSN, LOW);
-  delayMicroseconds(10); // Setup time
-  
-  // Przesyłaj 16 bitów (MSB first)
-  for (int i = 15; i >= 0; i--) {
-    // Ustaw bit danych na MOSI
-    digitalWrite(PIN_MOSI, (data & (1 << i)) ? HIGH : LOW);
-    delayMicroseconds(10);
-    
-    // Wygeneruj zbocze narastające zegara
-    digitalWrite(PIN_SCK, HIGH);
-    delayMicroseconds(10);
-    
-    // Odczytaj bit z MISO na zboczu narastającym
-    if (digitalRead(PIN_MISO)) {
-      receivedData |= (1 << i);
-    }
-    
-    // Zbocze opadające zegara
-    digitalWrite(PIN_SCK, LOW);
-    delayMicroseconds(10);
-  }
-  
-  // Dezaktywuj CSN
-  delayMicroseconds(10);
-  digitalWrite(PIN_CSN, HIGH);
-  delayMicroseconds(50); // Hold time
-  
-  return receivedData;
-}
+// ---------- Setup ----------
 
-// === FUNKCJE MT6816 ===
-uint16_t readMT6816Angle() {
-  // Wyślij komendę odczytu kąta
-  uint16_t response = spiTransfer16(MT6816_READ_ANGLE);
-  
-  // MT6816 potrzebuje drugiej transakcji dla otrzymania danych
-  delayMicroseconds(100);
-  response = spiTransfer16(MT6816_NOP);
-  
-  // Sprawdź poprawność danych (MT6816 ma 14-bitową rozdzielczość)
-  // Bity 15-14 powinny być 0, bity 13-0 to dane kąta
-  if ((response & 0xC000) == 0) {
-    return response & 0x3FFF; // Zwróć tylko 14 bitów danych
-  }
-  
-  return 0xFFFF; // Błąd komunikacji
-}
-
-bool validateAngleData(uint16_t angle) {
-  // Sprawdź czy kąt jest w prawidłowym zakresie (0-16383 dla 14-bit)
-  if (angle == 0xFFFF || angle > 16383) {
-    return false;
-  }
-  
-  // Sprawdź stabilność - kąt nie powinien skakać o więcej niż 1000 w jednym odczycie
-  // (chyba że przeszedł przez 0/16383)
-  if (lastAngle != 0) {
-    uint16_t diff = (angle > lastAngle) ? (angle - lastAngle) : (lastAngle - angle);
-    if (diff > 1000 && diff < 15000) { // 15000 to próg dla przejścia przez 0
-      return false;
-    }
-  }
-  
-  return true;
-}
-
-void updateAngleBuffer(uint16_t angle) {
-  angleBuffer[bufferIndex] = angle;
-  bufferIndex = (bufferIndex + 1) % 5;
-}
-
-uint16_t getFilteredAngle() {
-  // Prosta filtracja - mediana z 5 próbek
-  uint16_t sorted[5];
-  for (int i = 0; i < 5; i++) {
-    sorted[i] = angleBuffer[i];
-  }
-  
-  // Sortowanie bąbelkowe
-  for (int i = 0; i < 4; i++) {
-    for (int j = 0; j < 4 - i; j++) {
-      if (sorted[j] > sorted[j + 1]) {
-        uint16_t temp = sorted[j];
-        sorted[j] = sorted[j + 1];
-        sorted[j + 1] = temp;
-      }
-    }
-  }
-  
-  return sorted[2]; // Mediana
-}
-
-// === SETUP ===
 void setup() {
-  // Konfiguracja pinów SPI
-  pinMode(PIN_SCK, OUTPUT);
-  pinMode(PIN_MOSI, OUTPUT);
-  pinMode(PIN_MISO, INPUT_PULLDOWN);  // Pull-down z powodu zewnętrznych pull-up
-  pinMode(PIN_CSN, OUTPUT);
-  
-  // Konfiguracja pinów sygnalizacji
-  pinMode(LED_PIN, OUTPUT);
+  // Buzzer
   pinMode(BUZZER_PIN, OUTPUT);
-  
-  // Inicjalizacja stanów pinów SPI
-  digitalWrite(PIN_SCK, LOW);    // Clock idle low
-  digitalWrite(PIN_MOSI, LOW);   // MOSI idle low
-  digitalWrite(PIN_CSN, HIGH);   // CSN idle high (inactive)
-  
-  // Inicjalizacja sygnalizacji
-  digitalWrite(LED_PIN, LOW);
   digitalWrite(BUZZER_PIN, LOW);
-  
-  // Sygnał startu - 2 długie piki
-  for (int i = 0; i < 2; i++) {
-    digitalWrite(LED_PIN, HIGH);
-    tone(BUZZER_PIN, 800, 200);
+
+  // Inicjalizacja I2C2
+  Wire2.begin();
+  Wire2.setClock(100000);
+  tca_initialized = true;
+
+  // Sygnał startowy
+  for (int i = 0; i < 3; i++) {
+    tone(BUZZER_PIN, 1000, 200);
     delay(300);
-    digitalWrite(LED_PIN, LOW);
-    delay(200);
   }
-  
-  delay(1000); // Stabilizacja MT6816
 }
 
-// === MAIN LOOP ===
+// ---------- Główna pętla ----------
+
 void loop() {
-  unsigned long currentTime = millis();
-  
-  // === ODCZYT KĄTA ===
-  if (currentTime - lastReadTime >= READ_INTERVAL) {
-    lastReadTime = currentTime;
-    
-    // Odczytaj kąt z MT6816
-    uint16_t rawAngle = readMT6816Angle();
-    
-    if (validateAngleData(rawAngle)) {
-      // Dane poprawne
-      updateAngleBuffer(rawAngle);
-      uint16_t filteredAngle = getFilteredAngle();
-      lastAngle = filteredAngle;
-      communicationOK = true;
-      
-      // Sygnalizuj poprawną komunikację (miganie co 10 odczytów)
-      static uint8_t readCounter = 0;
-      readCounter++;
-      if (readCounter >= 10) {
-        signalHeartbeat();
-        readCounter = 0;
-      }
-      
-    } else {
-      // Błąd komunikacji
-      communicationOK = false;
-      
-      // Sygnalizuj błąd co 5 nieudanych prób
-      static uint8_t errorCounter = 0;
-      errorCounter++;
-      if (errorCounter >= 5) {
-        signalError();
-        errorCounter = 0;
-      }
+  if (!tca_initialized) return;
+
+  uint16_t angle0 = 0, angle7 = 0;
+  bool ok0, ok7;
+
+  // AS5600 #1 (kanał 0)
+  tcaSelect(0);
+  ok0 = testAS5600();
+  if (ok0) angle0 = readAS5600Angle();
+
+  // AS5600 #2 (kanał 7)
+  tcaSelect(7);
+  ok7 = testAS5600();
+  if (ok7) angle7 = readAS5600Angle();
+
+  // Generowanie tonu
+  if (ok0 && ok7) {
+    // Obie wartośći poprawne: miks dwóch częstotliwości
+    int freq0 = map(angle0, 0, 4095, 200, 1200);
+    int freq7 = map(angle7, 0, 4095, 1200, 2000);
+    // Krótkie naprzemienne tony
+    tone(BUZZER_PIN, freq0, 30);
+    delay(40);
+    tone(BUZZER_PIN, freq7, 30);
+    delay(40);
+
+  } else if (ok0) {
+    // Tylko enkoder 0
+    int freq = map(angle0, 0, 4095, 200, 2000);
+    tone(BUZZER_PIN, freq);
+
+  } else if (ok7) {
+    // Tylko enkoder 7
+    int freq = map(angle7, 0, 4095, 200, 2000);
+    tone(BUZZER_PIN, freq);
+
+  } else {
+    // Brak połączenia z oboma
+    static bool state = false;
+    static unsigned long last = 0;
+    if (millis() - last > 500) {
+      if (state) tone(BUZZER_PIN, 300);
+      else noTone(BUZZER_PIN);
+      state = !state;
+      last = millis();
     }
   }
-  
-  // === DIAGNOSTYKA ===
-  if (currentTime - lastDiagTime >= DIAG_INTERVAL) {
-    lastDiagTime = currentTime;
-    
-    if (communicationOK) {
-      signalSuccess(); // Komunikacja działa poprawnie
-      
-      // Dodatkowa sygnalizacja kąta przez buzzer
-      // Wysokość tonu proporcjonalna do kąta
-      uint16_t toneFreq = 200 + (lastAngle * 800 / 16383); // 200-1000 Hz
-      tone(BUZZER_PIN, toneFreq, 100);
-      
-    } else {
-      // Brak komunikacji - seria błędów
-      for (int i = 0; i < 5; i++) {
-        digitalWrite(LED_PIN, HIGH);
-        tone(BUZZER_PIN, 200, 100);
-        delay(100);
-        digitalWrite(LED_PIN, LOW);
-        delay(100);
-      }
-    }
-  }
-  
-  delay(10); // Krótka pauza głównej pętli
+
+  delay(10);
 }
