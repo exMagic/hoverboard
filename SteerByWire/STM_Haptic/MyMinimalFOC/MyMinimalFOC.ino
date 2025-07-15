@@ -1,5 +1,7 @@
 #include <Wire.h>
-#include <SimpleFOC.h>
+#include "src/BLDCMotor.h"
+#include "src/drivers/BLDCDriver6PWM.h"
+#include "src/sensors/MagneticSensorI2C.h"
 
 // I2C / multiplekser TCA9548A
 #define I2C_SDA_PIN PB11
@@ -74,7 +76,7 @@ void setup() {
   driver1.pwm_frequency       = 20000;
   driver1.init();
   motor1.linkDriver(&driver1);
-  motor1.controller = MotionControlType::torque;
+  motor1.controller = ControlType::voltage;
   motor1.init();
   motor1.initFOC();
 
@@ -87,7 +89,7 @@ void setup() {
   driver2.pwm_frequency       = 20000;
   driver2.init();
   motor2.linkDriver(&driver2);
-  motor2.controller = MotionControlType::torque;
+  motor2.controller = ControlType::voltage;
   motor2.init();
   motor2.initFOC();
 

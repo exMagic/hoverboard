@@ -1,4 +1,6 @@
-genericSTM32F103C8.name=Generic STM32F1 series
-genericSTM32F103C8.upload.tool=stm32cubeprog
-genericSTM32F103C8.upload.protocol=SWD
-genericSTM32F103C8.upload.offset_address=0x08005000
+# Optymalizacja rozmiaru
+genericSTM32F103C8.build.flags.optimize=-Os
+genericSTM32F103C8.build.flags.ldspecs=-specs=nano.specs
+genericSTM32F103C8.compiler.c.extra_flags=-ffunction-sections -fdata-sections -fno-exceptions
+genericSTM32F103C8.compiler.cpp.extra_flags=-ffunction-sections -fdata-sections -fno-exceptions -fno-rtti
+genericSTM32F103C8.compiler.c.elf.extra_flags=-Wl,--gc-sections -Wl,--strip-all -Wl,--print-memory-usage
