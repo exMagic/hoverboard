@@ -59,65 +59,179 @@ void setup() {
   // buzzer
   pinMode(BUZZER_PIN, OUTPUT);
   digitalWrite(BUZZER_PIN, LOW);
-  buzzStart();
-
-  // init I2C + multiplekser
+  
+  // BEZPIECZNY START - wszystkie piny PWM na LOW i INPUT na początku
+  
+  // Ustawienie wszystkich pinów PWM jako INPUT (high impedance) - BEZPIECZNE
+  pinMode(PHA1_HI, INPUT);
+  pinMode(PHA1_LO, INPUT);
+  pinMode(PHB1_HI, INPUT);
+  pinMode(PHB1_LO, INPUT);
+  pinMode(PHC1_HI, INPUT);
+  pinMode(PHC1_LO, INPUT);
+  
+  pinMode(PHA2_HI, INPUT);
+  pinMode(PHA2_LO, INPUT);
+  pinMode(PHB2_HI, INPUT);
+  pinMode(PHB2_LO, INPUT);
+  pinMode(PHC2_HI, INPUT);
+  pinMode(PHC2_LO, INPUT);
+  
+  // Sygnał że system startuje bezpiecznie
+  tone(BUZZER_PIN, 500, 200);
+  delay(300);
+  tone(BUZZER_PIN, 800, 200);
+  delay(300);
+  tone(BUZZER_PIN, 1200, 500);
+  delay(600);
+  
+  // Test I2C i sensorów
   Wire2.begin();
   Wire2.setClock(100000);
-
-  // --- Silnik 1 (kanał 0) ---
+  
   tcaSelect(0);
   sensor1.init(&Wire2);
-  motor1.linkSensor(&sensor1);
-  driver1.voltage_power_supply = 12;
-  driver1.dead_zone           = 0.02f;       // 2% dead-time[16]
-  driver1.pwm_frequency       = 20000;
-  driver1.init();
-  motor1.linkDriver(&driver1);
-  motor1.controller = MotionControlType::torque;
-  motor1.init();
-  motor1.initFOC();
-
-  // --- Silnik 2 (kanał 7) ---
+  delay(100);
+  float a1 = sensor1.getAngle();
+  
   tcaSelect(7);
   sensor2.init(&Wire2);
-  motor2.linkSensor(&sensor2);
-  driver2.voltage_power_supply = 24;
-  driver2.dead_zone           = 0.02f;
-  driver2.pwm_frequency       = 20000;
-  driver2.init();
-  motor2.linkDriver(&driver2);
-  motor2.controller = MotionControlType::torque;
-  motor2.init();
-  motor2.initFOC();
-
-  // diagnostyka inicjalizacji
-  tcaSelect(0); float a1 = sensor1.getAngle();
-  tcaSelect(7); float a2 = sensor2.getAngle();
-  if(!isnan(a1) && !isnan(a2)) buzzOK();
-  else buzzErr();
+  delay(100);
+  float a2 = sensor2.getAngle();
+  
+  // Raport sensorów
+  if(!isnan(a1) && !isnan(a2)) {
+    // Oba sensory OK
+    tone(BUZZER_PIN, 1500, 200);
+    delay(250);
+    tone(BUZZER_PIN, 1500, 200);
+    delay(250);
+  } else {
+    // Problem z sensorami - ZATRZYMAJ TEST
+    tone(BUZZER_PIN, 300, 200);
+    delay(250);
+    tone(BUZZER_PIN, 300, 200);
+    delay(250);
+    tone(BUZZER_PIN, 300, 200);
+    delay(2000);
+    return; // NIE testuj silników jeśli sensory nie działają
+  }
+  
+  // OSTROŻNY TEST SILNIKÓW - POZIOM 1: Pojedyncze impulsy
+  delay(2000); // długa pauza przed testem
+  
+  tone(BUZZER_PIN, 600, 300); // sygnał rozpoczęcia testów silników
+  delay(500);
+  
+  // Test 1: Bardzo krótkie impulsy - silnik 1
+  tone(BUZZER_PIN, 800, 100);
+  delay(200);
+  
+  // Ustawienie jednego pinu jako OUTPUT na bardzo krótko
+  pinMode(PHA1_HI, OUTPUT);
+  digitalWrite(PHA1_HI, LOW); // upewnij się że jest LOW
+  delay(100);
+  
+  // Bardzo krótki impuls (1ms)
+  digitalWrite(PHA1_HI, HIGH);
+  delay(1);
+  digitalWrite(PHA1_HI, LOW);
+  delay(500);
+  
+  // Drugi pin
+  pinMode(PHB1_HI, OUTPUT);
+  digitalWrite(PHB1_HI, LOW);
+  delay(100);
+  
+  digitalWrite(PHB1_HI, HIGH);
+  delay(1);
+  digitalWrite(PHB1_HI, LOW);
+  delay(500);
+  
+  // Trzeci pin
+  pinMode(PHC1_HI, OUTPUT);
+  digitalWrite(PHC1_HI, LOW);
+  delay(100);
+  
+  digitalWrite(PHC1_HI, HIGH);
+  delay(1);
+  digitalWrite(PHC1_HI, LOW);
+  delay(500);
+  
+  // Powrót do INPUT (bezpieczne)
+  pinMode(PHA1_HI, INPUT);
+  pinMode(PHB1_HI, INPUT);
+  pinMode(PHC1_HI, INPUT);
+  
+  delay(1000);
+  
+  // Test 2: Silnik 2 - te same krótkie impulsy
+  tone(BUZZER_PIN, 1200, 100);
+  delay(200);
+  
+  pinMode(PHA2_HI, OUTPUT);
+  digitalWrite(PHA2_HI, LOW);
+  delay(100);
+  
+  digitalWrite(PHA2_HI, HIGH);
+  delay(1);
+  digitalWrite(PHA2_HI, LOW);
+  delay(500);
+  
+  pinMode(PHB2_HI, OUTPUT);
+  digitalWrite(PHB2_HI, LOW);
+  delay(100);
+  
+  digitalWrite(PHB2_HI, HIGH);
+  delay(1);
+  digitalWrite(PHB2_HI, LOW);
+  delay(500);
+  
+  pinMode(PHC2_HI, OUTPUT);
+  digitalWrite(PHC2_HI, LOW);
+  delay(100);
+  
+  digitalWrite(PHC2_HI, HIGH);
+  delay(1);
+  digitalWrite(PHC2_HI, LOW);
+  delay(500);
+  
+  // Powrót do INPUT (bezpieczne)
+  pinMode(PHA2_HI, INPUT);
+  pinMode(PHB2_HI, INPUT);
+  pinMode(PHC2_HI, INPUT);
+  
+  // Test 3: Jeśli przeżyliśmy krótkie impulsy, wypróbuj dłuższe (10ms)
+  delay(1000);
+  tone(BUZZER_PIN, 900, 200);
+  delay(300);
+  
+  // Silnik 1 - dłuższe impulsy
+  pinMode(PHA1_HI, OUTPUT);
+  digitalWrite(PHA1_HI, LOW);
+  delay(100);
+  
+  digitalWrite(PHA1_HI, HIGH);
+  delay(10); // 10ms
+  digitalWrite(PHA1_HI, LOW);
+  delay(1000);
+  
+  // Powrót do bezpiecznego stanu
+  pinMode(PHA1_HI, INPUT);
+  
+  // Końcowy sygnał - test zakończony
+  tone(BUZZER_PIN, 2000, 1000);
+  delay(1100);
+  
+  // Dodatkowy sygnał sukcesu
+  tone(BUZZER_PIN, 1500, 200);
+  delay(250);
+  tone(BUZZER_PIN, 1800, 200);
+  delay(250);
+  tone(BUZZER_PIN, 2000, 500);
+  delay(600);
 }
 
 void loop() {
-  static unsigned long lastD=0;
-
-  // FOC read & update
-  tcaSelect(0); motor1.loopFOC();
-  tcaSelect(7); motor2.loopFOC();
-
-  // wirtualny link haptic
-  float gain = 5.0;
-  float ang1 = motor1.shaft_angle;
-  float ang2 = motor2.shaft_angle;
-  tcaSelect(0); motor2.move( gain*(ang2 - ang1) );
-  tcaSelect(7); motor1.move( gain*(ang1 - ang2) );
-
-  // diagnostyka co 2s: krótki tonalny potwierdzenie lub ostrzeżenie
-  if(millis()-lastD>2000) {
-    lastD = millis();
-    tcaSelect(0); float d1 = sensor1.getAngle();
-    tcaSelect(7); float d2 = sensor2.getAngle();
-    if(!isnan(d1) && !isnan(d2)) tone(BUZZER_PIN,1200,100);
-    else tone(BUZZER_PIN,300,200);
-  }
+  // pusta - test zakończony w setup()
 }
