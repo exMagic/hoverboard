@@ -1,0 +1,14 @@
+#define PHA1_HI PA8   
+#define PHA1_LO PB13
+#define PHB1_HI PA9
+#define PHB1_LO PB14
+#define PHC1_HI PA10
+#define PHC1_LO PB15
+
+
+#define PHA2_HI PC6   
+#define PHA2_LO PA7
+#define PHB2_HI PC7
+#define PHB2_LO PB0
+#define PHC2_HI PC8
+#define PHC2_LO PB1

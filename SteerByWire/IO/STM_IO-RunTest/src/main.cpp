@@ -10,16 +10,16 @@
 // buzzer diagnostyczny
 #define BUZZER_PIN PA4
 
-// PWM 6-kanałowy dla silnika 1 (kanał 0) left
-#define PHA1_HI PA8
+// PWM 6-kanałowy dla silnika 1 (kanał 0) RIGHT = PA8 pins (POPRAWIONE!)
+#define PHA1_HI PA8   
 #define PHA1_LO PB13
 #define PHB1_HI PA9
 #define PHB1_LO PB14
 #define PHC1_HI PA10
 #define PHC1_LO PB15
 
-// PWM 6-kanałowy dla silnika 2 (kanał 7) right
-#define PHA2_HI PC6
+// PWM 6-kanałowy dla silnika 2 (kanał 7) LEFT = PC6 pins (POPRAWIONE!)
+#define PHA2_HI PC6   
 #define PHA2_LO PA7
 #define PHB2_HI PC7
 #define PHB2_LO PB0
@@ -27,6 +27,17 @@
 #define PHC2_LO PB1
 
 const int POLE_PAIRS = 15;  // par biegunów silnika hoverboard
+
+// PARAMETRY HOVERBOARD (na podstawie analizy main.c)
+const float BATTERY_VOLTAGE = 36.0;    // Rzeczywiste napięcie baterii hoverboard
+const float VOLTAGE_LIMIT = 12.0;      // Bezpieczny limit (1/3 zasilania)
+const float CURRENT_LIMIT = 10.0;      // Bezpieczny limit prądu [A]
+const float VELOCITY_LIMIT = 20.0;     // Limit prędkości [rad/s]
+
+// Globalne flagi bezpieczeństwa (jak w oryginalnym firmware)
+volatile bool enable_motors = false;
+volatile bool sensors_ok = false;
+volatile uint32_t main_loop_counter = 0;
 
 // instancja I2C dla multipleksera
 TwoWire Wire2(I2C_SDA_PIN, I2C_SCL_PIN);
@@ -54,184 +65,143 @@ MagneticSensorI2C sensor2 = MagneticSensorI2C(AS5600_ADDR, 12, 0x0E, 4);
 void buzzStart() { for(int i=0;i<3;i++){ tone(BUZZER_PIN,1000,150); delay(200);} }
 void buzzOK()    { tone(BUZZER_PIN,1500,500); delay(600); noTone(BUZZER_PIN); }
 void buzzErr()   { for(int i=0;i<4;i++){ tone(BUZZER_PIN,400,100); delay(150);} delay(200); }
+void buzzMotorsEnabled() { tone(BUZZER_PIN,1000,100); delay(150); tone(BUZZER_PIN,1500,100); delay(150); }
 
 void setup() {
   // buzzer
   pinMode(BUZZER_PIN, OUTPUT);
   digitalWrite(BUZZER_PIN, LOW);
   
-  // BEZPIECZNY START - wszystkie piny PWM na LOW i INPUT na początku
+  // Sygnał startu systemu - OPEN LOOP MODE
+  buzzStart();
+  delay(1000);
   
-  // Ustawienie wszystkich pinów PWM jako INPUT (high impedance) - BEZPIECZNE
-  pinMode(PHA1_HI, INPUT);
-  pinMode(PHA1_LO, INPUT);
-  pinMode(PHB1_HI, INPUT);
-  pinMode(PHB1_LO, INPUT);
-  pinMode(PHC1_HI, INPUT);
-  pinMode(PHC1_LO, INPUT);
+  // ####### POMIŃ SENSORY - OPEN LOOP TEST #######
+  // Dla open loop nie potrzebujemy sensorów!
+  sensors_ok = true; // Wymuszamy OK żeby przejść dalej
   
-  pinMode(PHA2_HI, INPUT);
-  pinMode(PHA2_LO, INPUT);
-  pinMode(PHB2_HI, INPUT);
-  pinMode(PHB2_LO, INPUT);
-  pinMode(PHC2_HI, INPUT);
-  pinMode(PHC2_LO, INPUT);
+  tone(BUZZER_PIN, 1200, 300); // Sygnał: OPEN LOOP MODE
+  delay(400);
+  tone(BUZZER_PIN, 800, 300);  // Sygnał: BEZ SENSORÓW
+  delay(400);
   
-  // Sygnał że system startuje bezpiecznie
-  tone(BUZZER_PIN, 500, 200);
-  delay(300);
-  tone(BUZZER_PIN, 800, 200);
-  delay(300);
-  tone(BUZZER_PIN, 1200, 500);
-  delay(600);
+  // ####### KONFIGURACJA STEROWNIKÓW (poprawne parametry) #######
   
-  // Test I2C i sensorów
-  Wire2.begin();
-  Wire2.setClock(100000);
+  // Driver 1 - POPRAWNE NAPIĘCIA!
+  // driver1.voltage_power_supply = BATTERY_VOLTAGE;  // 36V
+  // driver1.init();
   
-  tcaSelect(0);
-  sensor1.init(&Wire2);
-  delay(100);
-  float a1 = sensor1.getAngle();
+  // Driver 2 - POPRAWNE NAPIĘCIA!
+  driver2.voltage_power_supply = BATTERY_VOLTAGE;  // 36V
+  driver2.init();
   
-  tcaSelect(7);
-  sensor2.init(&Wire2);
-  delay(100);
-  float a2 = sensor2.getAngle();
+  // ####### KONFIGURACJA SILNIKÓW - OPEN LOOP #######
   
-  // Raport sensorów
-  if(!isnan(a1) && !isnan(a2)) {
-    // Oba sensory OK
-    tone(BUZZER_PIN, 1500, 200);
-    delay(250);
-    tone(BUZZER_PIN, 1500, 200);
-    delay(250);
-  } else {
-    // Problem z sensorami - ZATRZYMAJ TEST
-    tone(BUZZER_PIN, 300, 200);
-    delay(250);
-    tone(BUZZER_PIN, 300, 200);
-    delay(250);
-    tone(BUZZER_PIN, 300, 200);
-    delay(2000);
-    return; // NIE testuj silników jeśli sensory nie działają
-  }
+  // Motor 1 - WYŁĄCZONY DLA TESTU! (PRAWY SILNIK)
+  // motor1.linkDriver(&driver1);
+  // motor1.voltage_limit = 3.0;   
+  // motor1.velocity_limit = 5.0;  
+  // motor1.controller = MotionControlType::velocity_openloop;
+  // motor1.init();
   
-  // OSTROŻNY TEST SILNIKÓW - POZIOM 1: Pojedyncze impulsy
-  delay(2000); // długa pauza przed testem
-  
-  tone(BUZZER_PIN, 600, 300); // sygnał rozpoczęcia testów silników
-  delay(500);
-  
-  // Test 1: Bardzo krótkie impulsy - silnik 1
-  tone(BUZZER_PIN, 800, 100);
-  delay(200);
-  
-  // Ustawienie jednego pinu jako OUTPUT na bardzo krótko
-  pinMode(PHA1_HI, OUTPUT);
-  digitalWrite(PHA1_HI, LOW); // upewnij się że jest LOW
-  delay(100);
-  
-  // Bardzo krótki impuls (1ms)
-  digitalWrite(PHA1_HI, HIGH);
-  delay(1);
-  digitalWrite(PHA1_HI, LOW);
-  delay(500);
-  
-  // Drugi pin
-  pinMode(PHB1_HI, OUTPUT);
-  digitalWrite(PHB1_HI, LOW);
-  delay(100);
-  
-  digitalWrite(PHB1_HI, HIGH);
-  delay(1);
-  digitalWrite(PHB1_HI, LOW);
-  delay(500);
-  
-  // Trzeci pin
-  pinMode(PHC1_HI, OUTPUT);
-  digitalWrite(PHC1_HI, LOW);
-  delay(100);
-  
-  digitalWrite(PHC1_HI, HIGH);
-  delay(1);
-  digitalWrite(PHC1_HI, LOW);
-  delay(500);
-  
-  // Powrót do INPUT (bezpieczne)
-  pinMode(PHA1_HI, INPUT);
-  pinMode(PHB1_HI, INPUT);
-  pinMode(PHC1_HI, INPUT);
+  // Motor 2 - TYLKO ON AKTYWNY! (LEWY SILNIK - test)
+  motor2.linkDriver(&driver2);
+  motor2.voltage_limit = 3.0;   
+  motor2.velocity_limit = 5.0;
+  motor2.controller = MotionControlType::velocity_openloop;
+  motor2.init();
   
   delay(1000);
   
-  // Test 2: Silnik 2 - te same krótkie impulsy
-  tone(BUZZER_PIN, 1200, 100);
-  delay(200);
+  // ####### BEZ initFOC() - to potrzebuje sensorów! #######
+  // motor1.initFOC(); - POMINIĘTE
+  // motor2.initFOC(); - POMINIĘTE
   
-  pinMode(PHA2_HI, OUTPUT);
-  digitalWrite(PHA2_HI, LOW);
-  delay(100);
+  // Sygnał gotowości systemu
+  buzzOK();
   
-  digitalWrite(PHA2_HI, HIGH);
-  delay(1);
-  digitalWrite(PHA2_HI, LOW);
+  // ####### BEZPIECZNE WŁĄCZANIE SILNIKÓW #######
+  delay(2000); // Pauza przed włączeniem
+  
+  enable_motors = true;
+  buzzMotorsEnabled(); // Sygnał włączenia silników
   delay(500);
-  
-  pinMode(PHB2_HI, OUTPUT);
-  digitalWrite(PHB2_HI, LOW);
-  delay(100);
-  
-  digitalWrite(PHB2_HI, HIGH);
-  delay(1);
-  digitalWrite(PHB2_HI, LOW);
-  delay(500);
-  
-  pinMode(PHC2_HI, OUTPUT);
-  digitalWrite(PHC2_HI, LOW);
-  delay(100);
-  
-  digitalWrite(PHC2_HI, HIGH);
-  delay(1);
-  digitalWrite(PHC2_HI, LOW);
-  delay(500);
-  
-  // Powrót do INPUT (bezpieczne)
-  pinMode(PHA2_HI, INPUT);
-  pinMode(PHB2_HI, INPUT);
-  pinMode(PHC2_HI, INPUT);
-  
-  // Test 3: Jeśli przeżyliśmy krótkie impulsy, wypróbuj dłuższe (10ms)
-  delay(1000);
-  tone(BUZZER_PIN, 900, 200);
-  delay(300);
-  
-  // Silnik 1 - dłuższe impulsy
-  pinMode(PHA1_HI, OUTPUT);
-  digitalWrite(PHA1_HI, LOW);
-  delay(100);
-  
-  digitalWrite(PHA1_HI, HIGH);
-  delay(10); // 10ms
-  digitalWrite(PHA1_HI, LOW);
-  delay(1000);
-  
-  // Powrót do bezpiecznego stanu
-  pinMode(PHA1_HI, INPUT);
-  
-  // Końcowy sygnał - test zakończony
-  tone(BUZZER_PIN, 2000, 1000);
-  delay(1100);
-  
-  // Dodatkowy sygnał sukcesu
-  tone(BUZZER_PIN, 1500, 200);
-  delay(250);
-  tone(BUZZER_PIN, 1800, 200);
-  delay(250);
-  tone(BUZZER_PIN, 2000, 500);
-  delay(600);
 }
 
 void loop() {
-  // pusta - test zakończony w setup()
+  main_loop_counter++;
+  
+  // OPEN LOOP - nie sprawdzamy sensorów
+  if(!enable_motors) {
+    delay(100);
+    return;
+  }
+  
+  // ####### OPEN LOOP - BEZ AKTUALIZACJI SENSORÓW #######
+  // NIE UŻYWAMY: motor1.loopFOC(); - to potrzebuje sensorów
+  // NIE UŻYWAMY: tcaSelect() - nie potrzebujemy sensorów
+  
+  // ####### OPEN LOOP TEST RUCHU SILNIKÓW #######
+  // Co 3 sekundy (3000 ms) wykonaj bardzo delikatny test
+  
+  static unsigned long lastTestTime = 0;
+  static int testPhase = 0;
+  
+  if(millis() - lastTestTime > 3000) { // Częściej niż 5s
+    lastTestTime = millis();
+    
+    switch(testPhase) {
+      case 0:
+        // Test 1: TYLKO MOTOR2 (PC6 pins) - powinien być LEWY
+        tone(BUZZER_PIN, 1200, 200); // Wysoki sygnał dla motor2
+        delay(300);
+        
+        motor2.move(1.0); // TYLKO motor2!
+        delay(500);       
+        motor2.move(0);   
+        
+        break;
+        
+      case 1:
+        // Test 2: PONOWNIE MOTOR2 - potwierdzenie
+        tone(BUZZER_PIN, 1300, 200);
+        delay(300);
+        
+        motor2.move(-1.0); // Przeciwny kierunek
+        delay(500);       
+        motor2.move(0);   
+        
+        break;
+        
+      case 2:
+        // Test 3: JESZCZE RAZ MOTOR2 - maksymalne potwierdzenie
+        tone(BUZZER_PIN, 1400, 200);
+        delay(300);
+        
+        motor2.move(0.5); // Wolniej
+        delay(700);       // Jeszcze dłużej
+        motor2.move(0);
+        
+        break;
+        
+      case 3:
+        // Test 4: Pauza - motor1 jest wyłączony
+        tone(BUZZER_PIN, 500, 500); // Długi ton = koniec testów
+        delay(1000);
+        
+        break;
+        
+      case 4:
+        // Test 5: Reset - długa pauza
+        tone(BUZZER_PIN, 200, 1000); // Bardzo długi niski ton
+        delay(3000); // Bardzo długa pauza
+        testPhase = -1; 
+        break;
+    }
+    
+    testPhase++;
+  }
+  
+  // OPEN LOOP - szybsza pętla
+  delay(5); // 200Hz loop
 }
