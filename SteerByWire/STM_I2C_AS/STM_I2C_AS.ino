@@ -115,7 +115,7 @@ void loop() {
     static bool state = false;
     static unsigned long last = 0;
     if (millis() - last > 500) {
-      if (state) tone(BUZZER_PIN, 300);
+      if (state) tone(BUZZER_PIN, 600);
       else noTone(BUZZER_PIN);
       state = !state;
       last = millis();
