@@ -1,0 +1,10 @@
+/*
+ * Include directory for STM_IO-Blink project
+ * 
+ * Place your header files here if needed.
+ * This file exists to maintain the standard PlatformIO project structure.
+ */
+
+#pragma once
+
+// Project specific includes can be added here

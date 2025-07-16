@@ -10,23 +10,23 @@
 // buzzer diagnostyczny
 #define BUZZER_PIN PA4
 
-// PWM 6-kanałowy dla silnika 1 (kanał 0)
+// PWM 6-kanałowy dla silnika 1 (kanał 0) left
 #define PHA1_HI PA8
-#define PHA1_LO PA7
+#define PHA1_LO PB13
 #define PHB1_HI PA9
-#define PHB1_LO PB0
+#define PHB1_LO PB14
 #define PHC1_HI PA10
-#define PHC1_LO PB1
+#define PHC1_LO PB15
 
-// PWM 6-kanałowy dla silnika 2 (kanał 7)
-#define PHA2_HI PB6
-#define PHA2_LO PB7
-#define PHB2_HI PB8
-#define PHB2_LO PB9
-#define PHC2_HI PC6
-#define PHC2_LO PC7
+// PWM 6-kanałowy dla silnika 2 (kanał 7) right
+#define PHA2_HI PC6
+#define PHA2_LO PA7
+#define PHB2_HI PC7
+#define PHB2_LO PB0
+#define PHC2_HI PC8
+#define PHC2_LO PB1
 
-const int POLE_PAIRS = 11;  // par biegunów silnika hoverboard
+const int POLE_PAIRS = 15;  // par biegunów silnika hoverboard
 
 // instancja I2C dla multipleksera
 TwoWire Wire2(I2C_SDA_PIN, I2C_SCL_PIN);
